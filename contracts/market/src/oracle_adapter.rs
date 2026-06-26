@@ -106,17 +106,9 @@ impl OracleAdapter for ReflectorAdapter {
         _outcome: bool,
         _proof: &Bytes,
     ) -> Result<(), ContractError> {
-        // TODO(#139): Cross-contract call to fetch the price and evaluate
-        // the resolution condition.
-        //
-        // Sketch:
-        //   let args = (asset_symbol,).into_val(_env);
-        //   let (price, _ts): (i128, u64) =
-        //       _env.invoke_contract(&self.contract_id, &symbol_short!("lastprice"), args);
-        //   let resolved_yes = price >= market.resolution_price;
-        //   if resolved_yes != _outcome { return Err(ContractError::InvalidSignature); }
-        //   Ok(())
-        unimplemented!("Reflector adapter — tracked in #139")
+        // Full implementation is in #323. Return a typed error instead of
+        // panicking so callers can handle the unresolved state gracefully.
+        Err(ContractError::InvalidSignature)
     }
 }
 
@@ -151,20 +143,9 @@ impl OracleAdapter for PythAdapter {
         _outcome: bool,
         _proof: &Bytes,
     ) -> Result<(), ContractError> {
-        // TODO(#139): Two-step Pyth integration.
-        //
-        // Step 1 — submit VAA (caller passes Hermes-fetched bytes in `proof`):
-        //   _env.invoke_contract(&self.contract_id,
-        //       &symbol_short!("upd_feeds"), (_proof.clone(),).into_val(_env));
-        //
-        // Step 2 — read verified price:
-        //   let price: i64 = _env.invoke_contract(&self.contract_id,
-        //       &symbol_short!("get_price"), (self.price_feed_id.clone(),).into_val(_env));
-        //
-        //   let resolved_yes = price >= market.resolution_price as i64;
-        //   if resolved_yes != _outcome { return Err(ContractError::InvalidSignature); }
-        //   Ok(())
-        unimplemented!("Pyth adapter — tracked in #139")
+        // Full implementation is in #324. Return a typed error instead of
+        // panicking so callers can handle the unresolved state gracefully.
+        Err(ContractError::InvalidSignature)
     }
 }
 
@@ -195,5 +176,61 @@ impl<'a> OracleAdapter for AnyAdapter<'a> {
             AnyAdapter::Reflector(a) => a.verify_outcome(env, market_id, outcome, proof),
             AnyAdapter::Pyth(a) => a.verify_outcome(env, market_id, outcome, proof),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Env};
+
+    #[test]
+    fn reflector_returns_invalid_signature_not_panic() {
+        let env = Env::default();
+        let adapter = ReflectorAdapter {
+            contract_id: Address::generate(&env),
+        };
+        let result =
+            adapter.verify_outcome(&env, 1, true, &Bytes::new(&env));
+        assert_eq!(result, Err(ContractError::InvalidSignature));
+    }
+
+    #[test]
+    fn pyth_returns_invalid_signature_not_panic() {
+        let env = Env::default();
+        let adapter = PythAdapter {
+            contract_id: Address::generate(&env),
+            price_feed_id: BytesN::from_array(&env, &[0u8; 32]),
+        };
+        let result =
+            adapter.verify_outcome(&env, 1, true, &Bytes::new(&env));
+        assert_eq!(result, Err(ContractError::InvalidSignature));
+    }
+
+    #[test]
+    fn any_adapter_reflector_returns_invalid_signature_not_panic() {
+        let env = Env::default();
+        let adapter = AnyAdapter::Reflector(ReflectorAdapter {
+            contract_id: Address::generate(&env),
+        });
+        let result =
+            adapter.verify_outcome(&env, 42, false, &Bytes::new(&env));
+        assert_eq!(result, Err(ContractError::InvalidSignature));
+    }
+
+    #[test]
+    fn any_adapter_pyth_returns_invalid_signature_not_panic() {
+        let env = Env::default();
+        let adapter = AnyAdapter::Pyth(PythAdapter {
+            contract_id: Address::generate(&env),
+            price_feed_id: BytesN::from_array(&env, &[1u8; 32]),
+        });
+        let result =
+            adapter.verify_outcome(&env, 42, false, &Bytes::new(&env));
+        assert_eq!(result, Err(ContractError::InvalidSignature));
     }
 }
